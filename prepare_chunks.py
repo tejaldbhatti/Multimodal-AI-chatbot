@@ -120,6 +120,7 @@ if __name__ == "__main__":
         for i, chunk in enumerate(processed_chunks):
             print(f"\n--- Chunk {i+1} ---")
             print(chunk)
+        print(f"\n📦 Total chunks generated: {len(processed_chunks)}")
     else:
         print("No chunks generated. Check logs for warnings/errors.")
         
@@ -127,3 +128,5 @@ if __name__ == "__main__":
     # import shutil
     # shutil.rmtree(dummy_dir)
     # print(f"\nCleaned up {dummy_dir} directory.")
+    
+    print(processed_chunks)
