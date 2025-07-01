@@ -367,4 +367,4 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
         outputs=[user_question_textbox, chatbot_display, audio_output_player]
     )
 
-demo.queue().launch(share=False)
+demo.queue().launch(share=True)
