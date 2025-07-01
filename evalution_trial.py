@@ -7,6 +7,7 @@ from datetime import datetime
 from langchain_core.documents import Document # Import Document type for type hinting
 from dotenv import load_dotenv
 import os
+from chatbot_backend import agent_executor, retriever
 
 # --- Load environment variables from .env file ---
 load_dotenv()
@@ -17,13 +18,23 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # --- IMPORTANT: Import your agent_executor and retriever from app.py ---
 # This assumes 'app.py' is in the same directory as this script.
 # If app.py is in a different location or part of a package, adjust the import path.
+# try:
+#     from app import agent_executor, retriever 
+#     logging.info("Successfully imported agent_executor and retriever from app.py")
+# except ImportError as e:
+#     logging.error(f"Failed to import components from app.py: {e}")
+#     logging.error("Please ensure 'app.py' is in the correct directory and executable.")
+#     exit("Exiting: Could not load core chatbot components. Check app.py and its dependencies.")
+
+
 try:
-    from app import agent_executor, retriever 
-    logging.info("Successfully imported agent_executor and retriever from app.py")
+    from chatbot_backend import agent_executor, retriever 
+    logging.info("Successfully imported agent_executor and retriever from chatbot_backend.py")
 except ImportError as e:
-    logging.error(f"Failed to import components from app.py: {e}")
-    logging.error("Please ensure 'app.py' is in the correct directory and executable.")
-    exit("Exiting: Could not load core chatbot components. Check app.py and its dependencies.")
+    logging.error(f"Failed to import components from chatbot_backend.py: {e}")
+    logging.error("Please ensure 'chatbot_backend.py' is in the correct directory and executable.")
+    exit("Exiting: Could not load core chatbot components. Check chatbot_backend.py and its dependencies.")
+
 
 
 # --- Define get_relevant_documents using the imported retriever ---
