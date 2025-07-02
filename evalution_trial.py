@@ -2,50 +2,41 @@ import logging
 from typing import Dict, Any, List
 from langchain import hub
 from langchain_openai import ChatOpenAI
-from langsmith.evaluation import evaluate
+# Using aevaluate for asynchronous evaluation
+from langsmith.evaluation import aevaluate 
 from datetime import datetime
 from langchain_core.documents import Document # Import Document type for type hinting
 from dotenv import load_dotenv
 import os
-from chatbot_backend import agent_executor, retriever
+import asyncio # Import asyncio for running async functions
 
 # --- Load environment variables from .env file ---
 load_dotenv()
 
 # --- Configure logging for this evaluation script ---
+# Set logging level to INFO for debugging purposes to see more detailed messages.
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- IMPORTANT: Import your agent_executor and retriever from app.py ---
-# This assumes 'app.py' is in the same directory as this script.
-# If app.py is in a different location or part of a package, adjust the import path.
-# try:
-#     from app import agent_executor, retriever 
-#     logging.info("Successfully imported agent_executor and retriever from app.py")
-# except ImportError as e:
-#     logging.error(f"Failed to import components from app.py: {e}")
-#     logging.error("Please ensure 'app.py' is in the correct directory and executable.")
-#     exit("Exiting: Could not load core chatbot components. Check app.py and its dependencies.")
 
-
+# Import your agent_executor and retriever from chatbot_backend.py
+# --- CORRECTED THIS LINE: Changed filename to chatbot_backend ---
 try:
-    from chatbot_backend import agent_executor, retriever 
-    logging.info("Successfully imported agent_executor and retriever from chatbot_backend.py")
+    from chatbot_backend import AGENT_EXECUTOR, RETRIEVER 
+    logging.info("Successfully imported AGENT_EXECUTOR and RETRIEVER from chatbot_backend.py")
 except ImportError as e:
     logging.error(f"Failed to import components from chatbot_backend.py: {e}")
     logging.error("Please ensure 'chatbot_backend.py' is in the correct directory and executable.")
     exit("Exiting: Could not load core chatbot components. Check chatbot_backend.py and its dependencies.")
 
-
-
 # --- Define get_relevant_documents using the imported retriever ---
 # This function is crucial for your predict_agent_run_for_eval to provide contexts
-def get_relevant_documents(query: str) -> List[Document]:
+async def get_relevant_documents(query: str) -> List[Document]: # Made async
     """
-    Retrieves relevant documents using the initialized retriever from app.py.
+    Retrieves relevant documents using the initialized retriever from chatbot_backend.py.
     """
-    if retriever is None:
-        raise ValueError("Retriever is None. Ensure app.py initializes it correctly.")
-    return retriever.get_relevant_documents(query)
+    if RETRIEVER is None: # Corrected to uppercase RETRIEVER
+        raise ValueError("Retriever is None. Ensure chatbot_backend.py initializes it correctly.")
+    return await RETRIEVER.ainvoke(query) # Corrected to uppercase RETRIEVER and ainvoke
 
 
 # --- Define Prompts for Hallucination and Document Relevance ---
@@ -68,6 +59,7 @@ def answer_evaluator(run, example) -> dict:
     answer_grader = grade_prompt_answer | llm
 
     try:
+        # Note: Evaluators themselves are synchronous, they receive the already-run 'run' object
         score_response = answer_grader.invoke({
             "question": input_question,
             "correct_answer": correct_answer,
@@ -75,7 +67,8 @@ def answer_evaluator(run, example) -> dict:
         })
         
         # Robustly parse the score from the LLM's response
-        raw_score = score_response.get("Score")
+        # This version expects the score directly from a dictionary output
+        raw_score = score_response.get("Score") 
         score = 0.0 # Default score if parsing fails
 
         if isinstance(raw_score, (int, float)):
@@ -122,7 +115,8 @@ def answer_hallucination_evaluator(run, example) -> dict:
             "student_answer": prediction
         })
         
-        raw_score = score_response.get("Score")
+        # This version expects the score directly from a dictionary output
+        raw_score = score_response.get("Score") 
         score = 0.0
 
         if isinstance(raw_score, (int, float)):
@@ -167,7 +161,8 @@ def docs_relevance_evaluator(run, example) -> dict:
             "documents": contexts
         })
         
-        raw_score = score_response.get("Score")
+        # This version expects the score directly from a dictionary output
+        raw_score = score_response.get("Score") 
         score = 0.0
 
         if isinstance(raw_score, (int, float)):
@@ -196,12 +191,10 @@ def docs_relevance_evaluator(run, example) -> dict:
     return {"key": "document_relevance", "score": score}
 
 
-# --- Prediction Function for LangSmith Evaluation ---
-# This function wraps your agent_executor to produce output in the format
-# expected by the custom evaluators (i.e., 'answer' and 'contexts').
-def predict_agent_run_for_eval(example: Dict[str, Any]) -> Dict[str, Any]:
+# --- Prediction Function for LangSmith Evaluation (Now Async) ---
+async def predict_agent_run_for_eval(example: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Uses the agent_executor to answer a question for evaluation purposes.
+    Uses the AGENT_EXECUTOR to answer a question for evaluation purposes.
     Returns the answer under the 'answer' key and retrieved documents under 'contexts' key.
     """
     question = example.get("question")
@@ -209,12 +202,12 @@ def predict_agent_run_for_eval(example: Dict[str, Any]) -> Dict[str, Any]:
         logging.error("Cannot evaluate: 'question' key missing from example inputs.")
         return {"answer": "Error: Question missing.", "contexts": []}
 
-    logging.info(f"Evaluating question with agent_executor: {question}")
+    logging.info(f"Evaluating question with AGENT_EXECUTOR: {question}")
     
     retrieved_docs_strings = [] # Initialize as empty list
     try:
         # Use the get_relevant_documents function defined above, which uses the imported retriever
-        retrieved_docs_langchain = get_relevant_documents(question)
+        retrieved_docs_langchain = await get_relevant_documents(question) # Await the async function
         # Convert LangChain Document objects to strings (or whatever format your evaluators expect)
         # The evaluators expect a list of strings for 'documents'
         retrieved_docs_strings = [doc.page_content for doc in retrieved_docs_langchain]
@@ -224,8 +217,8 @@ def predict_agent_run_for_eval(example: Dict[str, Any]) -> Dict[str, Any]:
         # retrieved_docs_strings remains empty list if there's an error
 
     try:
-        # Invoke the agent executor to get the answer
-        response = agent_executor.invoke({"input": question})
+        # Invoke the agent executor to get the answer (now using ainvoke for async)
+        response = await AGENT_EXECUTOR.ainvoke({"input": question}) # Corrected to uppercase AGENT_EXECUTOR and ainvoke
         final_answer = response.get("output", "No answer generated by agent.")
 
         # Return both 'answer' and 'contexts' as expected by the evaluators
@@ -238,32 +231,38 @@ def predict_agent_run_for_eval(example: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --- Run the Evaluation with ALL Evaluators ---
-# IMPORTANT: Ensure "My_Financial_Literacy_QA_Dataset" matches the exact name of your dataset in LangSmith
+# IMPORTANT: Replace "YOUR_GENERATED_DATASET_NAME_HERE" with the actual name
+# from your create_dataset.py output (e.g., "My_Financial_Literacy_QA_Dataset_20250702_203634_c6ddb0")
 dataset_name = "My_Financial_Literacy_QA_Dataset" 
 
 print(f"\n--- Starting LangSmith Evaluation for dataset: {dataset_name} ---")
 
-experiment_results = evaluate(
-    predict_agent_run_for_eval, # The function that runs your agent and prepares output for evaluators
-    data=dataset_name,          # The name of your dataset in LangSmith
-    evaluators=[
-        answer_evaluator,           # Evaluates accuracy against reference answer
-        answer_hallucination_evaluator, # Evaluates if answer is grounded in retrieved docs
-        docs_relevance_evaluator    # Evaluates if retrieved docs are relevant to the question
-    ],
-    # Create a unique experiment name for better tracking in LangSmith
-    experiment_prefix=f"Financial_Literacy_Chatbot_Full_RAG_Eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-    metadata={
-        "variant": "Full RAG Evaluation with all 3 types",
-    },
-)
+async def main():
+    experiment_results = await aevaluate( # Use aevaluate for async prediction function
+        predict_agent_run_for_eval, # The function that runs your agent and prepares output for evaluators
+        data=dataset_name,          # The name of your dataset in Langsmith
+        evaluators=[
+            answer_evaluator,           # Evaluates accuracy against reference answer
+            answer_hallucination_evaluator, # Evaluates if answer is grounded in retrieved docs
+            docs_relevance_evaluator    # Evaluates if retrieved docs are relevant to the question
+        ],
+        # Create a unique experiment name for better tracking in Langsmith
+        experiment_prefix=f"Financial_Literacy_Chatbot_Specific_QA_Eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        metadata={
+            "variant": "Evaluation with 5 specific questions from Langsmith dataset",
+            "source_dataset_name": dataset_name # Log the dataset name for reference
+        },
+    )
 
-print("\n--- Evaluation complete! ---")
-print("View results on LangSmith:")
-# Attempt to print the direct URL to the experiment results
-try:
-    print(experiment_results.url)
-except AttributeError:
-    # Fallback if .url attribute is not available (e.g., older langsmith versions)
-    print(f"Experiment name: {experiment_results.experiment_name}")
-    print("Note: If the URL is not printed, you may need to upgrade your langsmith library (`pip install --upgrade langsmith`) or construct the URL manually using the experiment name and your LangSmith organization/project details.")
+    print("\n--- Evaluation complete! ---")
+    print("View results on LangSmith:")
+    # Attempt to print the direct URL to the experiment results
+    try:
+        print(experiment_results.url)
+    except AttributeError:
+        # Fallback if .url attribute is not available (e.g., older langsmith versions)
+        print(f"Experiment name: {experiment_results.experiment_name}")
+        print("Note: If the URL is not printed, you may need to upgrade your langsmith library (`pip install --upgrade langsmith`) or construct the URL manually using the experiment name and your Langsmith organization/project details.)")
+
+if __name__ == "__main__":
+    asyncio.run(main())

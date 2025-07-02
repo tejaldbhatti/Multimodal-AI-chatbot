@@ -3,7 +3,8 @@ import tempfile
 import logging
 import re
 import asyncio
-from typing import List, Tuple, Dict, Optional, Generator
+# Import AsyncGenerator for correct async generator type hints
+from typing import List, Tuple, Dict, Optional, Generator, AsyncGenerator, Any
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -27,6 +28,8 @@ except ImportError:
 
 
 # --- Import from your backend logic ---
+# Assuming chatbot_backend exists and works correctly.
+# If you don't have this file yet, you'll get a Pylance error for it too.
 from chatbot_backend import chatbot_respond # Import the core function
 
 # --- Configure logging ---
@@ -60,7 +63,7 @@ async def transcribe_audio(audio_path: str) -> str:
 async def speak(text: str) -> Optional[str]:
     try:
         # Ensure there's actual text to speak before calling gTTS
-        if not text or not text.strip(): 
+        if not text or not text.strip():
             return None
         tts = gTTS(text=text, lang='en')
         audio_file_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
@@ -72,12 +75,16 @@ async def speak(text: str) -> Optional[str]:
         return None
 
 # --- Gradio Chatbot Response Function ---
+# Changed return type to AsyncGenerator to match the async for loop usage
+# The yielded type is (str, List[List[str | None]], Optional[str])
+# The 'send' type is Any because we don't send anything into the generator
+# The 'return' type is None because the generator doesn't explicitly return a value
 async def chatbot_response(
     message: str | None,
     audio_input_path: str | None,
     history: List[List[str | None]],
     uploaded_salary_slip_content: Optional[str] = None
-) -> Generator[Tuple[str, List[List[str | None]], Optional[str]], None, None]:
+) -> AsyncGenerator[Tuple[str, List[List[str | None]], Optional[str]], Any, None]: # Changed return type here
 
     if history is None:
         history = []
@@ -91,7 +98,7 @@ async def chatbot_response(
             history.append([(message or "Audio input error"), response_text])
             audio_output_path = await speak(response_text)
             yield "", history, audio_output_path
-            return
+            return # Ensure to return from the async generator
         user_input_text = transcribed
     elif message:
         user_input_text = message.strip()
@@ -110,13 +117,20 @@ async def chatbot_response(
             logging.info("Calling backend for salary slip analysis via chatbot_respond.")
             # For salary slip, the backend returns the full response at once, not streaming chunks.
             # We need to explicitly get the first (and only) item from the async generator.
+            # Ensure chatbot_respond for salary slip case yields at least one item, or handles it.
+            # Assuming chatbot_respond is an async generator:
             response_generator = chatbot_respond(user_input=user_input_text, uploaded_salary_slip_content=uploaded_salary_slip_content)
+            # Fix for 'reportReturnType' at line 329, if chatbot_respond can return non-AsyncGenerator tuple
+            # If chatbot_respond also returns an async generator, this needs to be awaited correctly.
+            # Given your previous error, it seems `chatbot_respond` is also an async generator.
+            # So, await the first yielded value.
             response_from_backend = await response_generator.__anext__()
-            
+
+
             full_response_text_for_tts = response_from_backend
             current_chat_entry[1] = full_response_text_for_tts # Update the chat history entry with the full response
             yield "", history, None # Update UI with full text
-            
+
             logging.info(f"Chatbot Full Response for Salary Slip: {full_response_text_for_tts}")
 
             audio_output_path = await speak(full_response_text_for_tts)
@@ -129,7 +143,7 @@ async def chatbot_response(
                 current_chat_entry[1] += chunk # Append new chunk to the current response
                 full_response_text_for_tts += chunk # Accumulate for TTS
                 yield "", history, None # Yield to update Gradio UI with the new chunk
-            
+
             logging.info(f"Chatbot Full Response (for TTS): {full_response_text_for_tts}")
 
             # Once all chunks are received, generate audio for the complete response
@@ -196,7 +210,8 @@ sample_questions_data = {
 
 
 # --- Gradio Wrapper for Salary Slip Processing ---
-async def process_salary_slip_wrapper(file_obj, history) -> Generator[Tuple[str, List[List[str | None]], Optional[str]], None, None]:
+# Changed return type to AsyncGenerator
+async def process_salary_slip_wrapper(file_obj, history: List[List[str | None]]) -> AsyncGenerator[Tuple[str, List[List[str | None]], Optional[str]], Any, None]: # Changed return type here
     if file_obj is None:
         yield "", history, None
         return
@@ -222,13 +237,14 @@ async def process_salary_slip_wrapper(file_obj, history) -> Generator[Tuple[str,
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             logging.info(f"Read text from file: {file_path}")
-        
+
         # Call chatbot_response with the extracted content
+        # Note: The yield from an async generator is handled by `async for`
         async for current_textbox, current_history, current_audio_path in chatbot_response(
             None, # No direct text message, content comes from file
             None, # No audio input
-            history, 
-            uploaded_salary_slip_content=content 
+            history,
+            uploaded_salary_slip_content=content
         ):
             yield current_textbox, current_history, current_audio_path
 
@@ -330,8 +346,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
             *button_label_updates,
             *hidden_textbox_value_updates,
             gr.update(visible=True),
-            [],
-            None
+            [], # Clear chat history when new category selected
+            None # Clear audio output
         )
 
     category_budget_btn.click(
@@ -365,7 +381,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
         outputs=sample_question_btns + sample_question_text_inputs + [sample_questions_row, chatbot_display, audio_output_player]
     )
 
-    async def on_sample_question_click(question_text: str, chat_history: List[List[str | None]]) -> Generator[Tuple[str, List[List[str | None]], Optional[str]], None, None]:
+    # Changed return type of on_sample_question_click for consistency with chatbot_response
+    async def on_sample_question_click(question_text: str, chat_history: List[List[str | None]]) -> AsyncGenerator[Tuple[str, List[List[str | None]], Optional[str]], Any, None]: # Changed return type
         async for clear_textbox, updated_history, audio_path in chatbot_response(
             message=question_text,
             audio_input_path=None,
@@ -411,4 +428,3 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
     )
 
 demo.queue().launch(share=True)
-
