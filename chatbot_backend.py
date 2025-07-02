@@ -1,11 +1,10 @@
 import os
 import logging
 import re
-import asyncio # <-- Import asyncio
-from typing import List, Optional, Dict
+import asyncio
+from typing import List, Optional, Dict, AsyncGenerator, Tuple, Set
 from pydantic import BaseModel, Field
-from typing import List
-from typing import List, Optional, Dict, Generator # <-- Ensure 'Generator' is here
+
 # LangChain imports
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain.tools import Tool, StructuredTool
@@ -19,17 +18,20 @@ from langchain_core.runnables import RunnableConfig
 # Pinecone Imports
 from pinecone import Pinecone, ServerlessSpec
 from langchain_pinecone import PineconeVectorStore
+from pinecone import PineconeApiException
+
+# OpenAI specific error for authentication
+from openai import AuthenticationError as OpenAIAuthenticationError
+from openai import APIConnectionError as OpenAIAPIConnectionError
+from openai import APIStatusError as OpenAIAPIStatusError
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv()
 
 # --- Configure logging ---
-# Changed level to WARNING for potentially faster production performance.
-# You can change it to ERROR if you only want to see critical issues.
-# For debugging, set back to INFO or DEBUG.
-#logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Changed level to WARNING for production to reduce log overhead and improve speed.
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- Load OpenAI credentials ---
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -42,71 +44,85 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
 INDEX_NAME = "financial-literacy-chatbot"
 
-# ADD THESE DEBUG LINES:
-# These will now only show if logging level is INFO or DEBUG (not WARNING)
-logging.info(f"DEBUG app.py: PINECONE_API_KEY loaded: {'*****' if PINECONE_API_KEY else 'None'}")
-logging.info(f"DEBUG app.py: PINECONE_ENVIRONMENT loaded: {PINECONE_ENVIRONMENT}")
-logging.info(f"DEBUG app.py: INDEX_NAME used: {INDEX_NAME}")
-# END DEBUG LINES
-
 if not PINECONE_API_KEY or not PINECONE_ENVIRONMENT:
     logging.error("Pinecone API key or environment not set. Please add PINECONE_API_KEY and PINECONE_ENVIRONMENT to your .env file.")
     exit("Exiting: Pinecone credentials missing for chatbot app.")
 
-# --- Connect to Pinecone Vector Store ---
+# --- Connect to Pinecone Vector Store and Initialize Embeddings ---
 vectorstore = None
 retriever = None
-embeddings_model = None # Define embeddings_model here before try block
+embeddings_model = None
 
 try:
-    # Initialize embeddings_model here, before it's used by PineconeVectorStore
     embeddings_model = OpenAIEmbeddings(openai_api_key=openai_api_key)
-    logging.info("Initialized OpenAIEmbeddings model for Pinecone retrieval.")
+    # logging.info("Initialized OpenAIEmbeddings model for Pinecone retrieval.") # Removed for less verbosity
 
     pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENVIRONMENT)
-    logging.info("Connected to Pinecone client.")
+    # logging.info("Connected to Pinecone client.") # Removed for less verbosity
 
+    # In the chatbot backend, we assume the index already exists and is populated.
+    # The data loader script is responsible for creating and populating it.
+    # We just need to connect to it and get the retriever.
+    
+    # Check if index exists before trying to connect
     index_names = [index["name"] for index in pc.list_indexes()]
     if INDEX_NAME not in index_names:
-        logging.error(f"Pinecone index '{INDEX_NAME}' does not exist. Please run 'pinecone_data_loader.py' first to create and populate it.")
-        exit("Exiting: Pinecone index not found.")
-    
+        logging.error(f"Pinecone index '{INDEX_NAME}' does not exist. Please run your data loader script first to create and populate it.")
+        exit("Exiting: Pinecone index not found for chatbot operation.")
+
+    # Initialize vectorstore and retriever if the index exists
     vectorstore = PineconeVectorStore(index_name=INDEX_NAME, embedding=embeddings_model)
-    retriever = vectorstore.as_retriever()
-    logging.info("Pinecone vector store and retriever initialized for existing index.")
+    # You can specify 'k' here to limit the number of retrieved documents, which can impact speed.
+    # For example: retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever() 
+    # logging.info("Pinecone vector store and retriever initialized for existing index.") # Removed for less verbosity
 
+except OpenAIAuthenticationError as e:
+    logging.error(f"OpenAI Authentication Error: Your OpenAI API key is invalid or expired. Please check your OPENAI_API_KEY in the .env file. Details: {e}", exc_info=True)
+    exit("Exiting: OpenAI Authentication Failed.")
+except OpenAIAPIConnectionError as e:
+    logging.error(f"OpenAI API Connection Error: Could not connect to OpenAI API. Check your internet connection or OpenAI service status. Details: {e}", exc_info=True)
+    exit("Exiting: OpenAI Connection Failed.")
+except OpenAIAPIStatusError as e:
+    logging.error(f"OpenAI API Error (Status Code: {e.status_code}): {e.response} Details: {e}", exc_info=True)
+    exit("Exiting: OpenAI API Error.")
+except PineconeApiException as e:
+    logging.error(f"Pinecone API Error: Check your PINECONE_API_KEY, PINECONE_ENVIRONMENT, and index name. Details: {e}", exc_info=True)
+    exit("Exiting: Pinecone API Failed.")
 except Exception as e:
-    logging.error(f"Error connecting to Pinecone index for chatbot: {e}")
-    exit("Exiting: Failed to connect to Pinecone. Ensure index exists and credentials are correct.")
+    logging.error(f"An unexpected error occurred during Pinecone/Embeddings initialization: {e}", exc_info=True)
+    exit("Exiting: Initialization failed.")
 
-# --- Initialize LLM, Memory, and Agent Prompt FIRST ---
-# llm = None
-# try:
-#     llm = ChatOpenAI(model="gpt-4o", temperature=0.7, openai_api_key=openai_api_key)
-#     logging.info("ChatOpenAI LLM initialized successfully with gpt-4o.")
-# except Exception as e:
-#     logging.error(f"Failed to initialize ChatOpenAI LLM: {e}")
-#     exit("Exiting: LLM could not be initialized.")
-# --- Initialize LLM, Memory, and Agent Prompt FIRST ---
+# --- Initialize LLM, Memory, and Agent Prompt ---
 llm = None
 try:
-    # IMPORTANT CHANGE: Enable streaming for the LLM
     llm = ChatOpenAI(model="gpt-4o", temperature=0.7, openai_api_key=openai_api_key, streaming=True)
-    logging.info("ChatOpenAI LLM initialized successfully with gpt-4o.")
+    # logging.info("ChatOpenAI LLM initialized successfully with gpt-4o (streaming enabled).") # Removed for less verbosity
+except OpenAIAuthenticationError as e:
+    logging.error(f"OpenAI LLM Authentication Error: Your OpenAI API key is invalid or expired. Please check your OPENAI_API_KEY in the .env file. Details: {e}", exc_info=True)
+    exit("Exiting: LLM Authentication Failed.")
+except OpenAIAPIConnectionError as e:
+    logging.error(f"OpenAI LLM API Connection Error: Could not connect to OpenAI API. Check your internet connection or OpenAI service status. Details: {e}", exc_info=True)
+    exit("Exiting: LLM Connection Failed.")
+except OpenAIAPIStatusError as e:
+    logging.error(f"OpenAI LLM API Error (Status Code: {e.status_code}): {e.response} Details: {e}", exc_info=True)
+    exit("Exiting: LLM API Error.")
 except Exception as e:
-    logging.error(f"Failed to initialize ChatOpenAI LLM: {e}")
+    logging.error(f"Failed to initialize ChatOpenAI LLM: {e}", exc_info=True)
     exit("Exiting: LLM could not be initialized.")
 
-# --- Changed to ConversationBufferWindowMemory for controlled history ---
-# k is now 3 as per your request
-memory = ConversationBufferWindowMemory(k=3, memory_key="chat_history", return_messages=True)
+# --- Conversation Memory ---
+memory = ConversationBufferWindowMemory(k=3, memory_key="chat_history", return_messages=True, output_key="output") # Added output_key to suppress warning
 
+# --- Agent Prompt Template ---
 prompt = ChatPromptTemplate.from_messages([
     SystemMessage(content=(
         "You are a highly knowledgeable and helpful financial literacy assistant. "
         "Your primary goal is to provide accurate, factual, and concise answers related to financial topics. "
+        "**For any factual questions, you MUST use the 'KnowledgeBaseQuery' tool to retrieve information from the knowledge base.** "
         "**Always prioritize using information retrieved from your tools, especially the 'KnowledgeBaseQuery' and any specific calculation tools (like for compound interest), for factual questions and computations.** "
         "**When a tool provides relevant information, you MUST use that information to formulate a direct answer to the user's question.** "
+        "**After answering, if you used the 'KnowledgeBaseQuery' tool, explicitly state 'Source: [filename]' for each unique source document used.** "
         "**Do NOT make up information or answer outside the scope of what the tools can provide.** "
         "If, after using ALL relevant tools, you genuinely cannot find enough information to confidently and completely answer the question based on the tool outputs, "
         "then, and only then, state clearly: 'I cannot answer this question based on the information I have available.'"
@@ -116,7 +132,7 @@ prompt = ChatPromptTemplate.from_messages([
     MessagesPlaceholder(variable_name="agent_scratchpad"),
 ])
 
-# --- Region Settings (UNCHANGED) ---
+# --- Region Settings ---
 REGION_SETTINGS: Dict[str, Dict] = {
     "us": {
         "currency": "$",
@@ -142,7 +158,7 @@ REGION_SETTINGS: Dict[str, Dict] = {
         "savings_recommendation": "Aim to save around 10-15% of your income for retirement.",
         "countries": ["germany", "deutschland"]
     },
-    "global": {
+    "global": { # Default fallback
         "currency": "",
         "retirement_age": 65,
         "tax_brackets": [],
@@ -152,7 +168,7 @@ REGION_SETTINGS: Dict[str, Dict] = {
     }
 }
 
-# --- Helper function to detect region from user input (UNCHANGED) ---
+# --- Helper function to detect region from user input ---
 def detect_region(text: str) -> str:
     text_lower = text.lower()
     for region_key, region_data in REGION_SETTINGS.items():
@@ -161,50 +177,59 @@ def detect_region(text: str) -> str:
                 return region_key
     return "global"
 
-# --- Define Tools (UNCHANGED, except for async call in KnowledgeBaseQuery if you were to make llm.invoke async too) ---
-import logging # Ensure logging is imported at the top of your file if it's not already
+# --- Define Tools ---
 
-# ... (other imports and code) ...
+# Pydantic Schema for KnowledgeBaseQuery
+class KnowledgeBaseQuerySchema(BaseModel):
+    query: str = Field(..., description="The question to ask the financial knowledge base.")
 
-import logging # Ensure logging is imported at the top of your file if it's not already
-
-# ... (other imports and code) ...
-
-def query_knowledge_base(query: str) -> str:
-    """Answer financial questions using the knowledge base."""
+# Modified query_knowledge_base to be async and return sources
+async def query_knowledge_base(query: str) -> Tuple[str, List[str]]:
+    """
+    Answer financial questions using the knowledge base.
+    Returns a tuple: (LLM's response based on context, list of unique source filenames).
+    """
     if not retriever:
         logging.warning("KnowledgeBaseQuery called but retriever is not initialized. RAG will not work.")
-        return "Knowledge base is not available. Please ensure the Pinecone index is set up correctly."
+        return "Knowledge base is not available. Please ensure the Pinecone index is set up correctly.", []
     try:
         # Retrieve documents from the vector store
         docs = retriever.invoke(query)
 
-        # --- CORRECTED LINE: Only one logging.info for the count ---
-        logging.info(f"KnowledgeBaseQuery: Retrieved {len(docs)} documents for query: '{query}'")
-        # --- END OF CORRECTED LINE ---
-
         retrieved_sources = []
-        for i, doc in enumerate(docs):
-            source_info = doc.metadata.get('source', 'No source info') # Assuming 'source' in metadata
-            logging.info(f"  Document {i+1} Source: {source_info}")
-            # If you want to see the content as well (be cautious with large documents)
-            # logging.debug(f"  Document {i+1} Content Snippet: {doc.page_content[:200]}...") # Log first 200 chars
+        for doc in docs:
+            source_info = doc.metadata.get('source', 'No source info')
             retrieved_sources.append(source_info)
         
         context = "\n\n".join([doc.page_content for doc in docs])
-        prompt_content = f"Use the following context to answer the question:\n{context}\n\nQuestion: {query}"
-
-        response = llm.invoke(prompt_content)
-        return response.content
+        
+        # Craft a prompt for the LLM to answer using the retrieved context
+        rag_prompt_content = (
+            f"Based on the following context, answer the user's question. "
+            f"If the context does not contain enough information, state that you cannot answer based on the provided information.\n\n"
+            f"Context:\n{context}\n\nQuestion: {query}"
+        )
+        
+        # Use ainvoke for asynchronous LLM call
+        response = await llm.ainvoke(rag_prompt_content)
+        
+        # Return the LLM's content and the unique sources
+        unique_sources = sorted(list(set(retrieved_sources)))
+        return response.content, unique_sources
+    except OpenAIAuthenticationError as e:
+        logging.error(f"OpenAI Authentication Error in KnowledgeBaseQuery: {e}", exc_info=True)
+        return "Sorry, there was an authentication issue with the knowledge base. Please check your OpenAI API key.", []
+    except OpenAIAPIConnectionError as e:
+        logging.error(f"OpenAI API Connection Error in KnowledgeBaseQuery: {e}", exc_info=True)
+        return "Sorry, I couldn't connect to the knowledge base. Please check your internet connection.", []
+    except OpenAIAPIStatusError as e:
+        logging.error(f"OpenAI API Error in KnowledgeBaseQuery (Status Code: {e.status_code}): {e.response} Details: {e}", exc_info=True)
+        return "Sorry, an OpenAI API error occurred while querying the knowledge base.", []
     except Exception as e:
-        logging.error(f"LLM call failed in query_knowledge_base: {e}")
-        return "Sorry, I couldn't process your knowledge base query at the moment."
+        logging.error(f"An unexpected error occurred in query_knowledge_base tool execution: {e}", exc_info=True)
+        return "Sorry, I couldn't process your knowledge base query at the moment.", []
 
-# ... (rest of your code) ...
-
-# ... (rest of your code) ...
-
-# Pydantic Schema for SavingsRecommendation (UNCHANGED)
+# Pydantic Schema for SavingsRecommendation
 class SavingsRecommendationSchema(BaseModel):
     income: float = Field(..., description="The user's income.")
     spending: float = Field(..., description="The user's spending.")
@@ -232,12 +257,11 @@ def recommend_savings(income: float, spending: float, region: str = "global") ->
         else:
             return f"You are saving {currency}{savings_amount:,.2f} per period, which is a good start. Keep up the great work! {savings_recommendation_text} Consider automating your savings."
     except Exception as e:
-        logging.error(f"Error in recommend_savings: {e}")
+        logging.error(f"Error in recommend_savings: {e}", exc_info=True)
         return "Sorry, I couldn't process savings recommendations. Please provide valid numbers for income and spending."
 
-def budgeting_templates(query: str = "") -> str: # Added 'query: str = ""' as an optional argument
-    """Provides information on various budgeting templates like 50/30/20 rule, zero-based, etc. This tool does not require specific arguments but can accept a query string."""
-    # The 'query' argument is accepted but not explicitly used, preventing the TypeError.
+def budgeting_templates(query: str = "") -> str:
+    """Provides information on various budgeting templates like 50/30/20 rule, zero-based, etc."""
     return (
         "Here are some popular budgeting templates:\n"
         "- **50/30/20 Rule:** 50% needs, 30% wants, 20% savings/debt repayment.\n"
@@ -247,12 +271,8 @@ def budgeting_templates(query: str = "") -> str: # Added 'query: str = ""' as an
         "Which one would you like to know more about, or would you like to see a general template?"
     )
 
-
-
-def credit_score_advice(query: str = "") -> str: # Added 'query: str = ""' as an optional argument
-    """Give advice on improving credit score. This tool does not require specific arguments but can accept a query string."""
-    # The 'query' argument is accepted but not explicitly used, preventing the TypeError.
-    # You could potentially use it if you wanted to make the advice dynamic based on the query.
+def credit_score_advice(query: str = "") -> str:
+    """Give advice on improving credit score."""
     return (
         "Tips to improve your credit score:\n"
         "- Pay your bills on time.\n"
@@ -268,7 +288,7 @@ def investment_advice(region: str = "global") -> str:
     advice_text = REGION_SETTINGS.get(detected_region_key, REGION_SETTINGS["global"])["investment_tips"]
     return advice_text
 
-# Pydantic Schema for RetirementPlanning (UNCHANGED)
+# Pydantic Schema for RetirementPlanning
 class RetirementPlanningSchema(BaseModel):
     age: Optional[int] = Field(None, description="The user's current age.")
     current_savings: Optional[float] = Field(None, description="The user's current retirement savings.")
@@ -298,21 +318,19 @@ def retirement_planning(age: Optional[int] = None, current_savings: Optional[flo
     advice.append(savings_tip)
 
     if current_savings is not None and desired_income_retirement is not None:
-        # A common rule of thumb for retirement income needed is 25 times your desired annual income
-        estimated_needed = desired_income_retirement * 25
-
-        if current_savings < estimated_needed * 0.2: # Less than 20% of goal
+        estimated_needed = desired_income_retirement * 25 # Common rule of thumb
+        if current_savings < estimated_needed * 0.2:
             advice.append(f"With current savings of {currency}{current_savings:,.2f} towards a goal requiring approximately {currency}{estimated_needed:,.2f}, you may need to significantly increase your savings rate.")
-        elif current_savings < estimated_needed * 0.5: # Between 20% and 50% of goal
+        elif current_savings < estimated_needed * 0.5:
             advice.append(f"With current savings of {currency}{current_savings:,.2f} towards a goal requiring approximately {currency}{estimated_needed:,.2f}, you are on your way but consider increasing contributions to meet your desired retirement income.")
-        else: # Over 50% of goal
+        else:
             advice.append(f"With current savings of {currency}{current_savings:,.2f} towards a goal requiring approximately {currency}{estimated_needed:,.2f}, you are making excellent progress towards your retirement income goals!")
     else:
         advice.append("Provide your current savings and desired retirement income for a more personalized assessment.")
 
     return " ".join(advice)
 
-# Pydantic Schema for CompoundInterestCalculator (UNCHANGED)
+# Pydantic Schema for CompoundInterestCalculator
 class CompoundInterestCalculatorSchema(BaseModel):
     principal: float = Field(..., description="The initial amount of money.")
     rate: float = Field(..., description="The annual interest rate as a decimal (e.g., 0.05 for 5%).")
@@ -338,7 +356,7 @@ def compound_interest_calculator(principal: float, rate: float, time: float, com
             f"Interest Earned: ${interest:,.2f}"
         )
     except Exception as e:
-        logging.error(f"Error in compound_interest_calculator: {e}")
+        logging.error(f"Error in compound_interest_calculator: {e}", exc_info=True)
         return "Sorry, I couldn't calculate compound interest. Please provide valid numbers for principal, rate (as a decimal, e.g., 0.05 for 5%), time, and compounds per period."
 
 def salary_slip_analysis(salary_slip_content: str) -> str:
@@ -347,26 +365,56 @@ def salary_slip_analysis(salary_slip_content: str) -> str:
     It looks for 'Gross Pay', 'Net Pay', and 'Deductions'.
     """
     logging.info("Attempting salary slip analysis.")
+    logging.debug(f"Salary slip content received:\n{salary_slip_content[:500]}...") # Log first 500 chars
+
     gross_pay = None
     net_pay = None
     deductions = None
 
-    gross_pay_match = re.search(r'Gross\s*Pay[:\s-]*\s*[\$\€£]?\s*([\d,\.]+)', salary_slip_content, re.IGNORECASE)
-    net_pay_match = re.search(r'Net\s*Pay[:\s-]*\s*[\$\€£]?\s*([\d,\.]+)', salary_slip_content, re.IGNORECASE)
-    deductions_match = re.search(r'Deductions[:\s-]*\s*[\$\€£]?\s*([\d,\.]+)', salary_slip_content, re.IGNORECASE)
+    # Regex for Gross Pay and similar earnings - made more flexible for various delimiters and surrounding text
+    gross_pay_patterns = [
+        r'(?:Gross\s*Pay|Gross\s*Salary|Total\s*Earnings|Gross\s*Amount|Basic\s*Salary|Salary|Wages|Total\s*Pay)\s*[:\s"\n,]*[\$\€£]?\s*([\d,\.]+)',
+    ]
+    for pattern in gross_pay_patterns:
+        match = re.search(pattern, salary_slip_content, re.IGNORECASE)
+        if match:
+            gross_pay = float(match.group(1).replace(',', ''))
+            logging.info(f"Found Gross Pay: {gross_pay} using pattern: {pattern}")
+            break
+
+    # Regex for Net Pay and similar take-home pay - made more flexible for various delimiters and surrounding text
+    net_pay_patterns = [
+        r'(?:Net\s*Pay|Net\s*Salary|Take\s*Home\s*Pay|Total\s*Net|Amount\s*Paid)\s*[:\s"\n,]*[\$\€£]?\s*([\d,\.]+)',
+    ]
+    for pattern in net_pay_patterns:
+        match = re.search(pattern, salary_slip_content, re.IGNORECASE)
+        if match:
+            net_pay = float(match.group(1).replace(',', ''))
+            logging.info(f"Found Net Pay: {net_pay} using pattern: {pattern}")
+            break
+
+    # Regex for Deductions - made more flexible for various delimiters and surrounding text
+    deductions_patterns = [
+        r'(?:Total\s*Deductions|Deductions\s*Total|Total\s*Withholdings|Employee\s*Deductions)\s*[:\s"\n,]*[\$\€£]?\s*([\d,\.]+)',
+    ]
+    for pattern in deductions_patterns:
+        match = re.search(pattern, salary_slip_content, re.IGNORECASE)
+        if match:
+            deductions = float(match.group(1).replace(',', ''))
+            logging.info(f"Found Deductions: {deductions} using pattern: {pattern}")
+            break
 
     try:
-        if gross_pay_match:
-            gross_pay = float(gross_pay_match.group(1).replace(',', ''))
-            logging.info(f"Found Gross Pay: {gross_pay}")
-        if net_pay_match:
-            net_pay = float(net_pay_match.group(1).replace(',', ''))
-            logging.info(f"Found Net Pay: {net_pay}")
-        if deductions_match:
-            deductions = float(deductions_match.group(1).replace(',', ''))
-            logging.info(f"Found Deductions: {deductions}")
-
-        if gross_pay is None and net_pay is None and deductions is None:
+        # If gross_pay and net_pay are found, calculate deductions from them
+        if gross_pay is not None and net_pay is not None:
+            # If a direct 'Deductions' total was found, prioritize it. Otherwise, calculate.
+            if deductions is None:
+                deductions = gross_pay - net_pay
+                logging.info(f"Calculated Deductions: {deductions} (Gross - Net)")
+            else:
+                logging.info(f"Using explicitly found Deductions: {deductions}")
+        elif gross_pay is None and net_pay is None and deductions is None:
+            logging.warning("No key financial figures found in salary slip content.")
             return "I couldn't find key financial figures like Gross Pay, Net Pay, or Deductions in the provided salary slip content. Please ensure the text is clear and contains these details."
 
         recommendations = []
@@ -376,14 +424,14 @@ def salary_slip_analysis(salary_slip_content: str) -> str:
             recommendations.append(f"- Your Gross Pay is: ${gross_pay:,.2f}")
         if net_pay is not None:
             recommendations.append(f"- Your Net Pay is: ${net_pay:,.2f}")
+        
+        # Only include deductions if it was found or calculated
         if deductions is not None:
             recommendations.append(f"- Your Total Deductions are: ${deductions:,.2f}")
-
-        if gross_pay and net_pay:
-            actual_deductions = gross_pay - net_pay
-            recommendations.append(f"- Calculated deductions: ${actual_deductions:,.2f}. This accounts for approximately {(actual_deductions/gross_pay*100):.2f}% of your gross pay.")
-            if actual_deductions > gross_pay * 0.3:
-                recommendations.append("- Your deductions seem quite high. You might want to review your tax withholdings, retirement contributions, and other benefits to ensure they align with your financial goals.")
+            if gross_pay is not None and gross_pay > 0: # Avoid division by zero
+                recommendations.append(f"- This accounts for approximately {(deductions/gross_pay*100):.2f}% of your gross pay.")
+                if deductions > gross_pay * 0.3:
+                    recommendations.append("- Your deductions seem quite high. You might want to review your tax withholdings, retirement contributions, and other benefits to ensure they align with your financial goals.")
 
         if net_pay is not None:
             savings_target = net_pay * 0.20
@@ -398,14 +446,33 @@ def salary_slip_analysis(salary_slip_content: str) -> str:
         return "\n".join(recommendations)
 
     except ValueError:
-        return "I found some numbers but couldn't convert them to a valid format. Please ensure numerical values are clear (e.g., 1,000.00)."
+        logging.error("ValueError: Could not convert extracted number to float. Check regex or input format.", exc_info=True)
+        return "I found some numbers but couldn't convert them to a valid numerical format (e.g., issues with commas or decimals). Please ensure numerical values are clear (e.g., 1,000.00 or 1000.00)."
     except Exception as e:
-        logging.error(f"An unexpected error occurred during salary slip analysis: {e}")
+        logging.error(f"An unexpected error occurred during salary slip analysis: {e}", exc_info=True)
         return "An unexpected error occurred while analyzing the salary slip. Please try again or provide content in a different format."
 
-# --- Tool List (UNCHANGED) ---
+# --- New Tool: Debt Repayment Strategies ---
+def debt_repayment_strategies(query: str = "") -> str:
+    """Provides information on various debt repayment strategies like debt snowball, debt avalanche, and debt consolidation."""
+    return (
+        "Here are some popular debt repayment strategies:\n"
+        "- **Debt Snowball Method:** Pay off debts from smallest balance to largest. Once the smallest is paid, roll that payment into the next smallest debt.\n"
+        "- **Debt Avalanche Method:** Pay off debts from highest interest rate to lowest. This method saves you the most money on interest.\n"
+        "- **Debt Consolidation:** Combine multiple debts into a single, larger loan, often with a lower interest rate or more favorable terms. This can simplify payments and potentially reduce overall interest paid.\n"
+        "- **Balance Transfer:** Move high-interest credit card debt to a new credit card with a lower or 0% introductory APR. Be mindful of balance transfer fees and the promotional period.\n"
+        "Which strategy sounds most appealing, or would you like more details on any of them?"
+    )
+
+# --- Tool List ---
 tools = [
-    Tool(name="KnowledgeBaseQuery", func=query_knowledge_base, description="Answer financial questions using knowledge base."),
+    StructuredTool(
+        name="KnowledgeBaseQuery",
+        func=query_knowledge_base,
+        description="Answer financial questions using the knowledge base. Always use this tool for factual financial questions.",
+        args_schema=KnowledgeBaseQuerySchema,
+        coroutine=query_knowledge_base
+    ),
     StructuredTool(
         name="SavingsRecommendation",
         func=recommend_savings,
@@ -427,25 +494,29 @@ tools = [
         description="Calculate compound interest, total amount, or interest earned. This tool is specifically designed for precise financial calculations involving: 'principal' (initial amount as float), 'rate' (annual interest rate as a decimal, e.g., 0.05 for 5%), 'time' (duration in years as float), and 'compounds_per_period' (number of times interest is compounded per year as int, e.g., 1 for annually, 12 for monthly). Use this tool whenever a user asks to calculate compound interest, future value, or interest earned based on these parameters.",
         args_schema=CompoundInterestCalculatorSchema
     ),
+    Tool(name="SalarySlipAnalysis", func=salary_slip_analysis, description="Analyze an uploaded salary slip (text content) for financial figures and provide recommendations."),
+    # Added the new Debt Repayment Strategies tool
+    Tool(name="DebtRepaymentStrategies", func=debt_repayment_strategies, description="Provide information on various debt repayment strategies like debt snowball, debt avalanche, and debt consolidation."),
 ]
 
 # Create the agent with tools and prompt
-# verbose=True is set here as you requested for debugging, but for production consider setting to False
 agent = create_openai_tools_agent(llm=llm, tools=tools, prompt=prompt)
 
-# Create agent executor properly
-agent_executor = AgentExecutor.from_agent_and_tools(agent=agent, tools=tools, memory=memory, verbose=True)
-
+# Create agent executor
+# Reverted verbose=False for production speed.
+agent_executor = AgentExecutor.from_agent_and_tools(agent=agent, tools=tools, memory=memory, verbose=False)
 
 
 # --- Main Interaction Function ---
-# IMPORTANT CHANGE: Changed return type to Generator and used agent_executor.stream()
-async def chatbot_respond(user_input: str, uploaded_salary_slip_content: Optional[str] = None) -> Generator[str, None, None]:
-    logging.info(f"Received user input: {user_input if user_input else 'No text input'} and salary slip content: {uploaded_salary_slip_content is not None}")
+async def chatbot_respond(user_input: str, uploaded_salary_slip_content: Optional[str] = None) -> AsyncGenerator[str, None]:
+    """
+    Asynchronously responds to user input, optionally processing an uploaded salary slip.
+    Yields chunks of the response for streaming, and includes source and tool attribution.
+    """
+    logging.info(f"Received user input: '{user_input}' and salary slip content provided: {uploaded_salary_slip_content is not None}")
 
     if uploaded_salary_slip_content:
-        # Note: salary_slip_analysis is synchronous. If it was long-running, you might need to run it in a thread pool.
-        # For salary slip, it's not streaming, so yield the full response at once for simplicity
+        # For salary slip, we don't stream, as the analysis is a single, complete output.
         response_text = salary_slip_analysis(uploaded_salary_slip_content)
         yield response_text
         return
@@ -454,24 +525,46 @@ async def chatbot_respond(user_input: str, uploaded_salary_slip_content: Optiona
         yield "Please type a question or upload a salary slip."
         return
 
+    retrieved_sources_for_display: Set[str] = set()
+    tools_used_for_display: Set[str] = set()
+    
     try:
-        # IMPORTANT CHANGE: Use .stream() method for the agent_executor
-        # This will yield chunks of the output.
+        # Stream chunks from the agent executor
         async for chunk in agent_executor.astream({"input": user_input}):
-        #async for chunk in agent_executor.stream({"input": user_input}, config=RunnableConfig(callbacks=[memory])): # Pass memory in config
             if "output" in chunk:
-                # The 'output' key contains the final response from the agent
+                # This is a text chunk from the LLM's final answer
                 yield chunk["output"]
-                # In most cases, there's only one "output" that needs to be yielded per turn.
-                # If your agent yields multiple distinct "output" chunks for a single turn,
-                # you would remove this break to ensure all are yielded.
-                # For standard streaming, we typically expect one final 'output'.
-                # Keeping `break` for typical single-final-output streaming behavior.
-                break 
+            elif "tool_calls" in chunk:
+                # Collect names of tools that were called
+                for tool_call in chunk["tool_calls"]:
+                    tool_name = tool_call.get('name')
+                    if tool_name:
+                        tools_used_for_display.add(tool_name)
+            elif "tool_outputs" in chunk:
+                # Collect sources if KnowledgeBaseQuery was used
+                for tool_output in chunk["tool_outputs"]:
+                    tool_name = tool_output.get('tool_name')
+                    tool_output_content = tool_output.get('output')
+
+                    if tool_name == "KnowledgeBaseQuery" and isinstance(tool_output_content, tuple) and len(tool_output_content) == 2:
+                        _, sources = tool_output_content
+                        retrieved_sources_for_display.update(sources)
+        
+        # After the main response has streamed, append the attribution
+        attribution_text = ""
+        if tools_used_for_display:
+            attribution_text += "\n\nTools Used: " + ", ".join(sorted(list(tools_used_for_display)))
+        if retrieved_sources_for_display:
+            source_text = "\n\nSources: " + ", ".join(sorted(list(retrieved_sources_for_display)))
+            attribution_text += source_text
+        
+        if attribution_text:
+            yield attribution_text # Yield attribution as a final chunk
 
     except Exception as e:
-        logging.error(f"Error during agent execution: {e}")
+        logging.error(f"Error during agent execution: {e}", exc_info=True)
         yield "I apologize, I encountered an error trying to answer your question. Please try again."
+        return
 
 
 # --- CLI test loop (for quick local testing) ---
@@ -501,14 +594,12 @@ if __name__ == "__main__":
                 break
 
             try:
-                full_response = ""
-                # Await the generator and print chunks
+                # Await the async generator and print chunks
                 async for response_chunk in chatbot_respond(user_input, uploaded_salary_slip_content=None):
-                    print(response_chunk, end="", flush=True) # Print chunk immediately
-                    full_response += response_chunk
+                    print(response_chunk, end="", flush=True) 
                 print("\n") # Newline after full response
             except Exception as e:
-                logging.error(f"Error in main CLI loop during response generation: {e}")
+                logging.error(f"Error in main CLI loop during response generation: {e}", exc_info=True)
                 print("⚠️ An unexpected error occurred. Please check logs.")
     
-    asyncio.run(main_cli_loop())        
+    asyncio.run(main_cli_loop())
