@@ -4,8 +4,6 @@ configures and connects to Pinecone, and then processes text transcripts
 from 'prepare_chunks.py' to embed and upload them to a Pinecone vector store.
 It handles index creation if the specified index does not already exist.
 
-Note: For optimal Pylint compliance regarding module naming (C0103),
-this file should ideally be renamed to 'pinecone_loader.py' or 'data_loader.py'.
 """
 
 import os

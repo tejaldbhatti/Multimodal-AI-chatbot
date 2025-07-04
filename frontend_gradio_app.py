@@ -1,21 +1,44 @@
+"""
+This module implements a Gradio web interface for a Financial Literacy Chatbot.
+It integrates speech-to-text (Faster Whisper), text-to-speech (gTTS),
+PDF processing (pypdf), and a custom chatbot backend.
+"""
+
+import asyncio
+import logging
 import os
 import tempfile
-import logging
-import re
-import asyncio
-# Import AsyncGenerator and Any for correct async generator type hints
-from typing import List, Tuple, Dict, Optional, Generator, AsyncGenerator, Any
+from typing import Any, AsyncGenerator, List, Optional, Tuple
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv()
 
-# --- Gradio import ---
+# --- Third-party imports ---
 import gradio as gr
-
-# --- Speech-to-Text (Faster Whisper) and Text-to-Speech (gTTS) ---
 from faster_whisper import WhisperModel
 from gtts import gTTS
+
+# --- Local application imports ---
+# IMPORTANT: Ensure 'chatbot_backend.py' exists in the same directory and
+# its dependencies are installed. This import will fail if it's not present,
+# or if 'chatbot_respond' is not correctly defined within it.
+try:
+    from chatbot_backend import chatbot_respond # Import the core function
+except ImportError as e:
+    logging.error("Failed to import chatbot_backend: %s. "
+                  "Ensure chatbot_backend.py is in the same directory "
+                  "and 'chatbot_respond' is defined.", e)
+    # Define a placeholder function to avoid NameError if import fails
+    async def chatbot_respond( # pylint: disable=unused-argument
+        user_input: str,
+        uploaded_salary_slip_content: Optional[str]
+    ):
+        """
+        Placeholder for chatbot_respond if the backend cannot be imported.
+        """
+        yield "Error: Chatbot backend not loaded. Please check server logs."
+
 
 # --- PDF Processing Library ---
 # You might need to install this: pip install pypdf
@@ -23,16 +46,10 @@ try:
     import pypdf
     logging.info("PyPDF2 (pypdf) library loaded for PDF processing.")
 except ImportError:
-    logging.error("PyPDF2 (pypdf) not found. Please install it with 'pip install pypdf' to enable PDF processing.")
+    logging.error("PyPDF2 (pypdf) not found. Please install it with "
+                  "'pip install pypdf' to enable PDF processing.")
     pypdf = None
 
-
-# --- Import from your backend logic ---
-# Assuming chatbot_backend exists and works correctly.
-# If you don't have this file yet, you'll get a Pylance error for it too.
-# Make sure your chatbot_backend.py also has its dependencies installed
-# and addresses its own Pylance errors (e.g., for Pinecone, Langchain components).
-from chatbot_backend import chatbot_respond # Import the core function
 
 # --- Configure logging ---
 # Changed level to WARNING for production to reduce log overhead.
@@ -44,10 +61,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # --- Speech-to-Text (Faster Whisper) ---
 try:
     # Consider using device="cuda" if you have a compatible GPU for faster transcription
+    # pylint: disable=invalid-name
     whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
     logging.info("Faster Whisper model loaded.")
-except Exception as e:
-    logging.error(f"Error loading Faster Whisper model: {e}. Speech-to-text functionality will be limited.")
+except Exception as e: # pylint: disable=broad-except
+    logging.error("Error loading Faster Whisper model: %s. "
+                  "Speech-to-text functionality will be limited.", e)
     whisper_model = None
 
 async def transcribe_audio(audio_path: str) -> str:
@@ -63,12 +82,14 @@ async def transcribe_audio(audio_path: str) -> str:
     if not whisper_model:
         return "Error: Speech-to-text model not loaded."
     try:
-        segments, info = await asyncio.to_thread(whisper_model.transcribe, audio_path, beam_size=5)
+        segments, _ = await asyncio.to_thread( # pylint: disable=W0212
+            whisper_model.transcribe, audio_path, beam_size=5
+        )
         transcription = " ".join([segment.text for segment in segments])
-        logging.info(f"Audio Transcribed: '{transcription}'")
+        logging.info("Audio Transcribed: '%s'", transcription)
         return transcription
-    except Exception as e:
-        logging.error(f"Error during audio transcription: {e}")
+    except Exception as e: # pylint: disable=broad-except
+        logging.error("Error during audio transcription: %s", e)
         return f"Error: Could not transcribe audio. {e}"
 
 async def speak(text: str) -> Optional[str]:
@@ -79,23 +100,25 @@ async def speak(text: str) -> Optional[str]:
         text (str): The text to convert to speech.
 
     Returns:
-        Optional[str]: The path to the generated audio file, or None if an error occurred or text is empty.
+        Optional[str]: The path to the generated audio file, or None if an
+                       error occurred or text is empty.
     """
     try:
         # Ensure there's actual text to speak before calling gTTS
         if not text or not text.strip():
             return None
-        tts = gTTS(text=text, lang='en')
         audio_file_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+        tts = gTTS(text=text, lang='en')
+        # pylint: disable=W0212,consider-using-with
         await asyncio.to_thread(tts.save, audio_file_path)
-        logging.info(f"Text-to-speech audio saved to: {audio_file_path}")
+        logging.info("Text-to-speech audio saved to: %s", audio_file_path)
         return audio_file_path
-    except Exception as e:
-        logging.error(f"Error during text-to-speech: {e}")
+    except Exception as e: # pylint: disable=broad-except
+        logging.error("Error during text-to-speech: %s", e)
         return None
 
 # --- Gradio Chatbot Response Function ---
-async def chatbot_response(
+async def chatbot_response( # pylint: disable=too-many-locals
     message: str | None,
     audio_input_path: str | None,
     history: List[List[str | None]],
@@ -109,7 +132,8 @@ async def chatbot_response(
         message (str | None): Text message from the user.
         audio_input_path (str | None): Path to an audio file for transcription.
         history (List[List[str | None]]): The chat history for Gradio.
-        uploaded_salary_slip_content (Optional[str]): Extracted text content from a salary slip file.
+        uploaded_salary_slip_content (Optional[str]): Extracted text content
+                                                      from a salary slip file.
 
     Yields:
         Tuple[str, List[List[str | None]], Optional[str]]:
@@ -122,12 +146,13 @@ async def chatbot_response(
 
     user_input_text = ""
     if audio_input_path:
-        logging.info(f"Processing audio input from: {audio_input_path}")
+        logging.info("Processing audio input from: %s", audio_input_path)
         transcribed = await transcribe_audio(audio_input_path)
         if transcribed.startswith("Error"):
-            response_text = f"I could not process your audio: {transcribed}. Try typing your question or re-recording."
-            # Corrected type hint issue by explicitly handling str | None for the first element
-            history.append([message if message is not None else "Audio input error", response_text])
+            response_text = (f"I could not process your audio: {transcribed}. "
+                             "Try typing your question or re-recording.")
+            history.append([message if message is not None else
+                            "Audio input error", response_text])
             audio_output_path = await speak(response_text)
             yield "", history, audio_output_path
             return # Ensure to return from the async generator
@@ -147,29 +172,38 @@ async def chatbot_response(
     try:
         if uploaded_salary_slip_content:
             logging.info("Calling backend for salary slip analysis via chatbot_respond.")
-            # For salary slip, the backend returns the full response at once, not streaming chunks.
-            # Assuming chatbot_respond is an async generator, we get the first (and only) item.
-            response_generator = chatbot_respond(user_input=user_input_text, uploaded_salary_slip_content=uploaded_salary_slip_content)
-            response_from_backend = await response_generator.__anext__() # Get the first (and likely only) item
+            # For salary slip, the backend returns the full response at once,
+            # not streaming chunks.
+            response_generator = chatbot_respond(
+                user_input=user_input_text,
+                uploaded_salary_slip_content=uploaded_salary_slip_content
+            )
+            # Use anext() for Python 3.10+
+            response_from_backend = await anext(response_generator)
 
             full_response_text_for_tts = response_from_backend
-            current_chat_entry[1] = full_response_text_for_tts # Update the chat history entry with the full response
+            # Update the chat history entry with the full response
+            current_chat_entry[1] = full_response_text_for_tts
             yield "", history, None # Update UI with full text
 
-            logging.info(f"Chatbot Full Response for Salary Slip: {full_response_text_for_tts}")
+            logging.info("Chatbot Full Response for Salary Slip: %s",
+                         full_response_text_for_tts)
 
             audio_output_path = await speak(full_response_text_for_tts)
             yield "", history, audio_output_path # Final yield with audio
 
         elif user_input_text:
-            logging.info(f"Calling backend with user input: '{user_input_text}' (streaming expected)")
+            logging.info("Calling backend with user input: '%s' (streaming expected)",
+                         user_input_text)
             # Iterate over streaming chunks from the backend
-            async for chunk in chatbot_respond(user_input=user_input_text, uploaded_salary_slip_content=None):
+            async for chunk in chatbot_respond(user_input=user_input_text,
+                                               uploaded_salary_slip_content=None):
                 current_chat_entry[1] += chunk # Append new chunk to the current response
                 full_response_text_for_tts += chunk # Accumulate for TTS
                 yield "", history, None # Yield to update Gradio UI with the new chunk
 
-            logging.info(f"Chatbot Full Response (for TTS): {full_response_text_for_tts}")
+            logging.info("Chatbot Full Response (for TTS): %s",
+                         full_response_text_for_tts)
 
             # Once all chunks are received, generate audio for the complete response
             audio_output_path = await speak(full_response_text_for_tts)
@@ -180,9 +214,10 @@ async def chatbot_response(
             yield "", history, None
             return
 
-    except Exception as e:
+    except Exception as e: # pylint: disable=broad-except
         error_message = f"An unexpected error occurred during agent execution: {e}"
-        logging.error(error_message, exc_info=True)
+        logging.error("An unexpected error occurred during agent execution: %s",
+                      e, exc_info=True)
         current_chat_entry[1] = error_message
         audio_output_path = await speak(error_message)
         yield "", history, audio_output_path
@@ -225,7 +260,7 @@ sample_questions_data = {
         "How much money do I need to retire comfortably?",
         "Can you explain Social Security benefits?"
     ],
-    "Debt Repayment": [ # Added new category for debt
+    "Debt Repayment": [
         "What are the different ways to pay off debt?",
         "Explain the debt snowball method.",
         "What is the debt avalanche method and how does it work?",
@@ -236,7 +271,10 @@ sample_questions_data = {
 
 
 # --- Gradio Wrapper for Salary Slip Processing ---
-async def process_salary_slip_wrapper(file_obj: Any, history: List[List[str | None]]) -> AsyncGenerator[Tuple[str, List[List[str | None]], Optional[str]], Any]:
+async def process_salary_slip_wrapper(
+    file_obj: Any,
+    history: List[List[str | None]]
+) -> AsyncGenerator[Tuple[str, List[List[str | None]], Optional[str]], Any]:
     """
     Processes an uploaded salary slip file (PDF or text), extracts its content,
     and then passes it to the chatbot backend for analysis.
@@ -256,13 +294,16 @@ async def process_salary_slip_wrapper(file_obj: Any, history: List[List[str | No
         return
 
     file_path = file_obj.name
-    user_message_for_history = f"Attempting to process salary slip: {os.path.basename(file_path)}"
+    user_message_for_history = (f"Attempting to process salary slip: "
+                                f"{os.path.basename(file_path)}")
 
     try:
         content = ""
         if file_path.lower().endswith('.pdf'):
             if pypdf is None:
-                response_for_history = "PDF processing library (pypdf) is not installed. Please install it with 'pip install pypdf' to enable PDF processing."
+                response_for_history = ("PDF processing library (pypdf) is not installed. "
+                                        "Please install it with 'pip install pypdf' to "
+                                        "enable PDF processing.")
                 history.append([user_message_for_history, response_for_history])
                 yield "", history, await speak(response_for_history)
                 return
@@ -271,11 +312,11 @@ async def process_salary_slip_wrapper(file_obj: Any, history: List[List[str | No
             reader = pypdf.PdfReader(file_path)
             for page in reader.pages:
                 content += page.extract_text() + "\n"
-            logging.info(f"Extracted text from PDF: {file_path}")
+            logging.info("Extracted text from PDF: %s", file_path)
         else: # Assume it's a text file
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            logging.info(f"Read text from file: {file_path}")
+            logging.info("Read text from file: %s", file_path)
 
         # Call chatbot_response with the extracted content
         async for current_textbox, current_history, current_audio_path in chatbot_response(
@@ -287,8 +328,8 @@ async def process_salary_slip_wrapper(file_obj: Any, history: List[List[str | No
             yield current_textbox, current_history, current_audio_path
 
 
-    except Exception as e:
-        logging.error(f"Error in process_salary_slip_wrapper: {e}", exc_info=True)
+    except Exception as e: # pylint: disable=broad-except
+        logging.error("Error in process_salary_slip_wrapper: %s", e, exc_info=True)
         response_for_history = f"Error processing file: {e}"
         history.append([user_message_for_history, response_for_history])
         yield "", history, await speak(response_for_history)
@@ -311,16 +352,16 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
         category_investment_btn = gr.Button("Investment")
         category_credit_btn = gr.Button("Credit Score")
         category_retirement_btn = gr.Button("Retirement Planning")
-        category_debt_btn = gr.Button("Debt Repayment") # Added new button for debt
+        category_debt_btn = gr.Button("Debt Repayment")
 
     gr.Markdown("## Sample Questions for Selected Category:")
     sample_questions_row = gr.Row(visible=False)
     with gr.Row():
-        sq_btn1 = gr.Button("")
-        sq_btn2 = gr.Button("")
-        sq_btn3 = gr.Button("")
-        sq_btn4 = gr.Button("")
-        sq_btn5 = gr.Button("")
+        sq_btn1 = gr.Button("") # pylint: disable=invalid-name
+        sq_btn2 = gr.Button("") # pylint: disable=invalid-name
+        sq_btn3 = gr.Button("") # pylint: disable=invalid-name
+        sq_btn4 = gr.Button("") # pylint: disable=invalid-name
+        sq_btn5 = gr.Button("") # pylint: disable=invalid-name
         sample_question_btns = [sq_btn1, sq_btn2, sq_btn3, sq_btn4, sq_btn5]
 
         sample_question_text_inputs = [
@@ -333,7 +374,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
         label="Conversation History",
         render_markdown=True,
         type='tuples',
-        value=[[None, "Hello! I'm your Financial Literacy Chatbot. Choose a category above, speak your question, or type it below!"]]
+        value=[[None, "Hello! I'm your Financial Literacy Chatbot. Choose a category "
+                "above, speak your question, or type it below!"]]
     )
 
     gr.Markdown("## Ask Your Own Question:")
@@ -386,7 +428,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
                    visibility, chat history, and audio player.
         """
         questions = sample_questions_data.get(category, ["No sample questions available."]*5)
-        questions_padded = (questions + [""] * 5)[:5] # Ensure 5 questions, padding with empty if less
+        # Ensure 5 questions, padding with empty if less
+        questions_padded = (questions + [""] * 5)[:5]
 
         button_label_updates = [gr.update(value=q) for q in questions_padded]
         hidden_textbox_value_updates = [gr.update(value=q) for q in questions_padded]
@@ -400,38 +443,47 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
             None # Clear any playing audio when new category is selected
         )
 
-    category_budget_btn.click(
+    category_budget_btn.click( # pylint: disable=no-member
         fn=update_sample_questions,
         inputs=[gr.State("Budgeting")],
-        outputs=sample_question_btns + sample_question_text_inputs + [sample_questions_row, chatbot_display, audio_output_player]
+        outputs=sample_question_btns + sample_question_text_inputs + \
+                [sample_questions_row, chatbot_display, audio_output_player]
     )
-    category_savings_btn.click(
+    category_savings_btn.click( # pylint: disable=no-member
         fn=update_sample_questions,
         inputs=[gr.State("Savings")],
-        outputs=sample_question_btns + sample_question_text_inputs + [sample_questions_row, chatbot_display, audio_output_player]
+        outputs=sample_question_btns + sample_question_text_inputs + \
+                [sample_questions_row, chatbot_display, audio_output_player]
     )
-    category_investment_btn.click(
+    category_investment_btn.click( # pylint: disable=no-member
         fn=update_sample_questions,
         inputs=[gr.State("Investment")],
-        outputs=sample_question_btns + sample_question_text_inputs + [sample_questions_row, chatbot_display, audio_output_player]
+        outputs=sample_question_btns + sample_question_text_inputs + \
+                [sample_questions_row, chatbot_display, audio_output_player]
     )
-    category_credit_btn.click(
+    category_credit_btn.click( # pylint: disable=no-member
         fn=update_sample_questions,
         inputs=[gr.State("Credit Score")],
-        outputs=sample_question_btns + sample_question_text_inputs + [sample_questions_row, chatbot_display, audio_output_player]
+        outputs=sample_question_btns + sample_question_text_inputs + \
+                [sample_questions_row, chatbot_display, audio_output_player]
     )
-    category_retirement_btn.click(
+    category_retirement_btn.click( # pylint: disable=no-member
         fn=update_sample_questions,
         inputs=[gr.State("Retirement Planning")],
-        outputs=sample_question_btns + sample_question_text_inputs + [sample_questions_row, chatbot_display, audio_output_player]
+        outputs=sample_question_btns + sample_question_text_inputs + \
+                [sample_questions_row, chatbot_display, audio_output_player]
     )
-    category_debt_btn.click( # New event handler for Debt Repayment button
+    category_debt_btn.click( # pylint: disable=no-member
         fn=update_sample_questions,
         inputs=[gr.State("Debt Repayment")],
-        outputs=sample_question_btns + sample_question_text_inputs + [sample_questions_row, chatbot_display, audio_output_player]
+        outputs=sample_question_btns + sample_question_text_inputs + \
+                [sample_questions_row, chatbot_display, audio_output_player]
     )
 
-    async def on_sample_question_click(question_text: str, chat_history: List[List[str | None]]) -> AsyncGenerator[Tuple[str, List[List[str | None]], Optional[str]], Any]:
+    async def on_sample_question_click(
+        question_text: str,
+        chat_history: List[List[str | None]]
+    ) -> AsyncGenerator[Tuple[str, List[List[str | None]], Optional[str]], Any]:
         """
         Handles the event when a sample question button is clicked.
         Feeds the sample question into the chatbot response.
@@ -452,13 +504,13 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
             yield clear_textbox, updated_history, audio_path
 
     for btn, text_input in zip(sample_question_btns, sample_question_text_inputs):
-        btn.click(
+        btn.click( # pylint: disable=no-member
             fn=on_sample_question_click,
             inputs=[text_input, chatbot_display],
             outputs=[user_question_textbox, chatbot_display, audio_output_player]
         )
 
-    transcribe_btn.click(
+    transcribe_btn.click( # pylint: disable=no-member
         fn=transcribe_audio,
         inputs=[audio_input_mic],
         outputs=[user_question_textbox]
@@ -466,27 +518,27 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Financial Literacy Chatbot") as de
 
     # Main interaction points:
     # 1. User types in textbox and presses Enter
-    user_question_textbox.submit(
+    user_question_textbox.submit( # pylint: disable=no-member
         fn=chatbot_response,
-        inputs=[user_question_textbox, gr.State(None), chatbot_display, gr.State(None)], # No audio input for text submit
+        inputs=[user_question_textbox, gr.State(None), chatbot_display, gr.State(None)],
         outputs=[user_question_textbox, chatbot_display, audio_output_player]
     )
     # 2. User types in textbox and clicks "Send Text" button
-    send_text_btn.click(
+    send_text_btn.click( # pylint: disable=no-member
         fn=chatbot_response,
-        inputs=[user_question_textbox, gr.State(None), chatbot_display, gr.State(None)], # No audio input for text send
+        inputs=[user_question_textbox, gr.State(None), chatbot_display, gr.State(None)],
         outputs=[user_question_textbox, chatbot_display, audio_output_player]
     )
 
     # 3. User records audio and clicks "Record & Send Voice" button
-    record_send_btn.click(
+    record_send_btn.click( # pylint: disable=no-member
         fn=chatbot_response,
-        inputs=[gr.State(None), audio_input_mic, chatbot_display, gr.State(None)], # No text message, audio input comes from mic
+        inputs=[gr.State(None), audio_input_mic, chatbot_display, gr.State(None)],
         outputs=[user_question_textbox, chatbot_display, audio_output_player]
     )
 
     # 4. User uploads salary slip and clicks "Process Salary Slip" button
-    process_slip_btn.click(
+    process_slip_btn.click( # pylint: disable=no-member
         fn=process_salary_slip_wrapper,
         inputs=[salary_slip_upload, chatbot_display],
         outputs=[user_question_textbox, chatbot_display, audio_output_player]
