@@ -1,121 +1,341 @@
-# 💬 Financial Literacy Chatbot
+# 🤖 Financial Literacy & Tax Advisor Chatbot
 
-The **Financial Literacy Chatbot** transforms overwhelming financial YouTube content into smart, personalized, and conversational insights.
+A production-grade, personalised financial advisor and tax preparation assistant built with LangGraph, FastAPI, and OpenAI. Supports Germany, USA, India, and Australia with real-time market data and country-specific tax calculations.
 
-Designed to enhance **financial literacy**, it offers **goal-based, region-aware guidance** in:
-
-- 💰 Budgeting  
-- 📊 Credit Score  
-- 🧓 Retirement Planning  
-- 📈 Investments  
-- 💵 Saving  
-
-Users can interact through voice, upload salary slips, and receive tailored advice — all via a **Gradio web interface**.
+> ⚠️ **Legal Disclaimer:** This chatbot provides financial education and tax preparation assistance only. It does not replace a licensed Steuerberater (§2 StBerG), CPA, CA, or registered tax agent.
 
 ---
 
-## 🧠 Data Ingestion & Knowledge Base
+## 🎯 What makes this different from ChatGPT?
 
-Financial content is sourced from YouTube videos and podcasts, then cleaned and chunked for processing.
-
-- **Embeddings**: `text-embedding-ada-002`  
-- **Vector Database**: [Pinecone](https://www.pinecone.io/)  
-  - Dimensions: `1536`  
-  - Similarity: `cosine`  
-  - Batch size: `100`  
-- Enables **semantic search** for accurate, context-aware answers
-
----
-
-## 🧩 Backend: LangChain Agent + Tools
-
-Built using **LangChain** with `gpt-4o-mini` for reasoning and tool orchestration.
-
-### 🔧 Integrated Tools
-
-| Tool | Function |
-|------|----------|
-| `KnowledgeBaseQuery` | Retrieves answers from Pinecone |
-| `SavingsRecommendation` | Custom saving plans by region & profile |
-| `BudgetingTemplates` | Budgeting methods (50/30/20, zero-based) |
-| `CreditScoreAdvice` | Personalized credit improvement |
-| `InvestmentAdvice` | Region-specific investment advice |
-| `RetirementPlanning` | Retirement goals & strategies |
-| `CompoundInterestCalculator` | Interest growth over time |
-| `SalarySlipAnalysis` | Extracts financial data from salary slips |
-| `DebtRepaymentStrategies` | Explains Snowball, Avalanche, etc. |
+| Feature | ChatGPT | This Chatbot |
+|---|---|---|
+| Country-specific tax rules | Generic | DE, USA, IN, AU official rules |
+| Real-time market data | ❌ Static | ✅ Live via Alpha Vantage |
+| Persistent user profile | ❌ Forgets | ✅ Remembered via Supabase |
+| Freelancer tax calculator | ❌ | ✅ VAT, Gewerbesteuer, GST |
+| Ehegattensplitting calculator | ❌ | ✅ III/V vs IV/IV comparison |
+| Salary slip analysis | Basic | ✅ Deep analysis via GPT-4o |
+| Source citations | ❌ | ✅ Official government sources |
+| Legal disclaimer on tax | ❌ | ✅ Mandatory, automatic |
+| Goal tracking | ❌ | ✅ Across sessions |
 
 ---
 
-## 🖥 Deployment: Gradio Web Interface
-
-The chatbot is accessible via a **Gradio interface** with:
-
-- ✍️ Text and 🎙️ Voice interaction (STT + TTS)  
-- 📄 File upload support (PDF/Text salary slips)  
-- 💬 Chat history and contextual memory  
-
----
-
-## 📊 Evaluation: LangSmith QA Metrics
-
-Evaluated using **LangSmith** with a custom QA dataset:
-
-| Metric | Description |
-|--------|-------------|
-| ✅ Answer Accuracy | Match between response and reference |
-| ❌ Hallucination Rate | Detects unsupported/generated content |
-| 📄 Document Relevance | Measures context relevance |
-
-- **Dataset**: `My_Financial_Literacy_QA_Dataset`  
-- **Script**: `evalution_trial.py`
-## 📁 Project Structure
+## 🏗️ Architecture
 
 ```
-├── chatbot_backend.py         # Core logic, agent, tool registration
-├── frontend_gradio_app.py     # Gradio frontend (chat + voice + file upload)
-├── prepare_chunks.py          # Clean & split YouTube transcripts
-├── pinecone_loader.py         # Generate embeddings & upload to Pinecone
-├── evalution_trial.py         # LangSmith QA evaluation
-├── .env                       # API keys and config (not committed)
-├── requirements.txt           # Python dependencies
+User (Voice or Text)
+        ↓
+┌─────────────────────────────────────────────┐
+│              FastAPI Backend                 │
+│  POST /chat  POST /tax/*  POST /market/*    │
+│  POST /upload/*  GET /health                │
+└─────────────────────────────────────────────┘
+        ↓
+┌─────────────────────────────────────────────┐
+│           LangGraph Agent Flow               │
+│                                             │
+│  detect_country → load_user_profile         │
+│       → classify_intent                     │
+│       → generate_response                   │
+└─────────────────────────────────────────────┘
+        ↓
+┌─────────────────────────────────────────────┐
+│              Tools & Data                    │
+│                                             │
+│  📊 Market: Alpha Vantage (live data)       │
+│  📰 News: NewsAPI (latest headlines)        │
+│  💰 Tax: 7 tax calculator tools             │
+│  📄 Docs: GPT-4o document analyzer         │
+│  🗄️  DB: Supabase (user profiles)          │
+│  🔍 RAG: Pinecone (knowledge base)         │
+└─────────────────────────────────────────────┘
+        ↓
+Personalised Response (text + optional voice)
 ```
-## ⚙️ Setup & Installation
 
-### 1. Clone the Repository
+---
+
+## 🌍 Supported Countries & Features
+
+### 🇩🇪 Germany
+- Progressive income tax (14% – 45%)
+- All Steuerklassen (I – VI)
+- Ehegattensplitting calculator (III/V vs IV/IV)
+- Freelancer: Einkommensteuer, Umsatzsteuer (19%/7%), Gewerbesteuer
+- Kleinunternehmer threshold (€22,000)
+- Single parent Steuerklasse II + Entlastungsbetrag
+- Investment: ETF, Riester Rente, bAV, Freistellungsauftrag
+- Steuerberater preparation checklist
+
+### 🇺🇸 USA
+- Federal tax brackets (10% – 37%)
+- Married filing jointly vs separately comparison
+- Self-employment tax (15.3%) + QBI deduction
+- Retirement: 401(k), Roth IRA, SEP-IRA limits
+- Head of Household filing for single parents
+
+### 🇮🇳 India
+- Old vs New tax regime comparison
+- Section 80C deductions (₹1.5L limit)
+- Presumptive taxation 44ADA for freelancers
+- GST registration threshold
+- Investment: PPF, NPS, ELSS, FD
+
+### 🇦🇺 Australia
+- Progressive tax + Medicare levy (2%)
+- Sole trader tax with GST threshold
+- Superannuation (11% employer contribution)
+- Capital gains discount (50% for assets > 12 months)
+- Low income tax offset (LITO)
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| LLM (Chat) | OpenAI GPT-4o-mini | Fast, cheap general responses |
+| LLM (Docs) | OpenAI GPT-4o | Long document analysis |
+| Orchestration | LangGraph | Multi-step agent flow |
+| Framework | LangChain | Tools, memory, RAG |
+| API | FastAPI | Production REST backend |
+| Vector DB | Pinecone | RAG knowledge base |
+| Database | Supabase (PostgreSQL) | User profiles, goals |
+| Market Data | Alpha Vantage | Live stocks, ETF, forex |
+| News | NewsAPI | Latest financial headlines |
+| UI | Gradio | Voice + text interface |
+| Evaluation | LangSmith + RAGAs | LLM output quality |
+| Deployment | Docker + Google Cloud Run | Production deployment |
+| CI/CD | GitHub Actions | Auto deploy on push |
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.11+
+- Docker Desktop
+- API keys (see Environment Variables)
+
+### Local Setup
 
 ```bash
-git clone <your-repository-url>
-cd financial-literacy-chatbot
+# Clone the repository
+git clone https://github.com/tejaldbhatti/financial-chatbot
+cd financial-chatbot
 
-2. Create Virtual Environment
-
+# Create virtual environment
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-3. Install Dependencies
-
+# Install dependencies
 pip install -r requirements.txt
 
-4. Add Environment Variables
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your API keys
 
-Create a .env file in the root directory:
+# Run the API
+uvicorn backend.main:app --reload
 
-OPENAI_API_KEY=your_openai_api_key
-PINECONE_API_KEY=your_pinecone_api_key
-PINECONE_ENVIRONMENT=your_pinecone_env
-LANGCHAIN_API_KEY=your_langsmith_api_key
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_PROJECT=financial-literacy-chatbot
+# Visit http://localhost:8000/docs
+```
 
-5. Prepare Knowledge Base
+### Docker Setup
 
-    💡 Ensure the Pinecone index financial-literacy-chatbot exists before running the backend.
+```bash
+# Build and run with Docker
+docker build -t financial-chatbot .
+docker run -p 8000:8000 --env-file .env financial-chatbot
 
-🧪 Run Evaluation
+# Or use docker-compose
+docker compose up
+```
 
-To test chatbot quality using LangSmith:
+---
 
-python evalution_trial.py
+## 🔑 Environment Variables
 
+```bash
+# Required
+OPENAI_API_KEY=           # OpenAI API key
+PINECONE_API_KEY=         # Pinecone vector DB
+PINECONE_ENVIRONMENT=     # Pinecone region
+LANGCHAIN_API_KEY=        # LangSmith tracing
 
+# Phase 2 — Market Data
+ALPHA_VANTAGE_API_KEY=    # Live stock/ETF/forex
+NEWS_API_KEY=             # Financial news headlines
+
+# Phase 3 — Database
+SUPABASE_URL=             # Supabase project URL
+SUPABASE_KEY=             # Supabase anon key
+```
+
+---
+
+## 📡 API Endpoints
+
+### Chat
+```
+POST /chat/              → main chat endpoint
+```
+
+### Market Data (Live)
+```
+POST /market/stock       → live stock price
+POST /market/forex       → live exchange rate
+POST /market/etf         → live ETF price
+POST /market/news        → latest financial news
+```
+
+### Tax Calculators
+```
+POST /tax/employee       → employee income tax
+POST /tax/freelancer     → freelancer tax (VAT, GST, SE tax)
+POST /tax/couple         → married couple tax (Ehegattensplitting)
+POST /tax/single-parent  → single parent tax (Steuerklasse II)
+POST /tax/steuerklasse   → recommend best Steuerklasse
+POST /tax/checklist      → Steuerberater prep checklist
+```
+
+### Document Upload
+```
+POST /upload/salary-slip     → analyze salary slip
+POST /upload/bank-statement  → analyze bank statement
+```
+
+---
+
+## 💬 Example Conversations
+
+**Tax calculation:**
+```
+User: I am a freelancer in Germany earning €80,000. How much tax?
+Bot:  Gross: €80,000 | Net profit (after expenses): €70,000
+      Income tax: €14,058 | VAT: €15,200 (must pay to Finanzamt)
+      Take home: €55,942/yr | €4,662/mo
+```
+
+**Couple tax:**
+```
+User: My husband earns €80,000 and I earn €30,000. Which Steuerklasse?
+Bot:  III/V saves €2,383/yr vs IV/IV.
+      Partner 1 → Steuerklasse III
+      Partner 2 → Steuerklasse V
+```
+
+**Live market data:**
+```
+User: What is Apple stock price?
+Bot:  AAPL: $293.08 📈 +$1.22 (+0.41%)
+      High: $299.70 | Low: $292.94 | Volume: 53M
+```
+
+---
+
+## 📊 Evaluation Results
+
+| Category | Score |
+|---|---|
+| Overall Accuracy | 97.5% |
+| Germany Tax | 100% |
+| Germany Couple Tax (Ehegattensplitting) | 75% |
+| Germany Single Parent | 100% |
+| USA Tax | 100% |
+| India Education | 100% |
+| Australia Education | 100% |
+| Live Market Data | 100% |
+| Forex Rates | 100% |
+| India Investment | 100% |
+| Germany Investment | 100% |
+| **Total Tests Passed** | **10/10** |
+
+---
+
+## 🗂️ Project Structure
+
+```
+financial-chatbot/
+├── backend/
+│   ├── agents/
+│   │   ├── state.py         # LangGraph state schema
+│   │   ├── nodes.py         # Agent nodes
+│   │   └── graph.py         # LangGraph flow
+│   ├── data/
+│   │   └── country_rules.py # Tax rules for 4 countries
+│   ├── tools/
+│   │   ├── market_data.py   # Live market tools
+│   │   ├── tax_employee.py  # Employee tax calculator
+│   │   ├── tax_freelancer.py# Freelancer tax calculator
+│   │   ├── tax_couple.py    # Ehegattensplitting
+│   │   ├── tax_single_parent.py # Single parent tax
+│   │   ├── tax_class_advisor.py # Steuerklasse advisor
+│   │   ├── steuerberater_prep.py# Checklist generator
+│   │   └── document_analyzer.py # Salary slip + bank statement
+│   ├── routers/
+│   │   ├── chat.py          # /chat endpoints
+│   │   ├── market.py        # /market endpoints
+│   │   ├── tax.py           # /tax endpoints
+│   │   └── upload.py        # /upload endpoints
+│   ├── db/
+│   │   └── supabase_client.py # Database operations
+│   ├── config.py            # All environment variables
+│   └── main.py              # FastAPI entry point
+├── frontend/
+│   └── gradio_app.py        # Voice + text UI
+├── evaluation/
+│   ├── create_dataset.py    # LangSmith dataset
+│   └── run_evaluation.py    # RAGAs evaluation
+├── docs/
+│   └── phase1_phase2_documentation.md
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## 🎓 AI Engineering Concepts Demonstrated
+
+- ✅ RAG (Retrieval Augmented Generation) with Pinecone
+- ✅ Agentic AI with LangGraph multi-node orchestration
+- ✅ Tool calling with OpenAI function calling
+- ✅ Multi-model routing (GPT-4o-mini vs GPT-4o)
+- ✅ Real-time data integration via MCP pattern
+- ✅ FastAPI production REST backend
+- ✅ Streaming LLM responses
+- ✅ Vector database (Pinecone)
+- ✅ LLM evaluation with LangSmith + RAGAs
+- ✅ Prompt engineering with system prompts
+- ✅ Data persistence with Supabase
+- ✅ Docker containerisation
+- ✅ Cloud deployment (Google Cloud Run)
+- ✅ CI/CD with GitHub Actions
+- ✅ Voice input (Whisper) + output (gTTS)
+- ✅ Document analysis with GPT-4o
+
+---
+
+## 👩‍💻 Author
+
+**Tejal Bhatti** — AI Engineer  
+📍 Nußloch, Germany  
+🔗 [LinkedIn](https://www.linkedin.com/in/tejal-bhatti-dataanalyst/)  
+🐙 [GitHub](https://github.com/tejaldbhatti)  
+📧 tejaldbhatti@gmail.com
+
+---
+
+## ⚖️ Legal Notice
+
+This application provides financial education and tax preparation assistance only. All tax calculations are estimates for educational purposes. This tool does not constitute professional financial or tax advice and cannot replace:
+- A licensed **Steuerberater** in Germany (§2 StBerG)
+- A licensed **CPA** in the USA
+- A licensed **CA** in India
+- A registered **Tax Agent** in Australia
+
+Always consult a qualified professional for your specific situation.

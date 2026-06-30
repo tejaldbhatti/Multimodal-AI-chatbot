@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  # FastAPI backend
+  api:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONPATH=/app
+    restart: unless-stopped
+
+  # Gradio frontend (optional — runs separately)
+  frontend:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "7860:7860"
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONPATH=/app
+      - API_URL=http://api:8000
+    command: python frontend/gradio_app.py
+    depends_on:
+      - api
+    restart: unless-stopped

@@ -1,0 +1,174 @@
+{
+  "date": "2026-06-30T08:43:46.177555",
+  "total_tests": 10,
+  "passed": 8,
+  "average_score": 0.9,
+  "results": [
+    {
+      "category": "Germany Tax",
+      "question": "I am a freelancer in Germany earning 60000 euros. How much tax?",
+      "expected_country": "germany",
+      "detected_country": "germany",
+      "expected_intent": "tax",
+      "detected_intent": "tax",
+      "keyword_results": {
+        "11,074": true,
+        "freelancer": true,
+        "steuer": true,
+        "disclaimer": true
+      },
+      "score": 1.0,
+      "status": "\u2705 PASS",
+      "response_length": 1239
+    },
+    {
+      "category": "Germany Couple Tax",
+      "question": "My husband earns 80000 and I earn 30000 in Germany. Which Steuerklasse?",
+      "expected_country": "germany",
+      "detected_country": "germany",
+      "expected_intent": "tax",
+      "detected_intent": "tax",
+      "keyword_results": {
+        "III": true,
+        "V": true,
+        "ehegattensplitting": true,
+        "2,383": true
+      },
+      "score": 1.0,
+      "status": "\u2705 PASS",
+      "response_length": 1212
+    },
+    {
+      "category": "Germany Single Parent",
+      "question": "I am a single parent in Germany with 2 kids earning 45000. Tax?",
+      "expected_country": "germany",
+      "detected_country": "germany",
+      "expected_intent": "tax",
+      "detected_intent": "tax",
+      "keyword_results": {
+        "steuerklasse II": false,
+        "entlastungsbetrag": true,
+        "1,080": false
+      },
+      "score": 0.3333333333333333,
+      "status": "\u274c FAIL",
+      "response_length": 1840
+    },
+    {
+      "category": "USA Tax",
+      "question": "I live in USA and earn $80,000. What is my tax bracket?",
+      "expected_country": "usa",
+      "detected_country": "usa",
+      "expected_intent": "tax",
+      "detected_intent": "tax",
+      "keyword_results": {
+        "22%": true,
+        "47,150": true,
+        "80,000": true
+      },
+      "score": 1.0,
+      "status": "\u2705 PASS",
+      "response_length": 847
+    },
+    {
+      "category": "India Education",
+      "question": "I live in India. Explain Section 80C to me.",
+      "expected_country": "india",
+      "detected_country": "india",
+      "expected_intent": "education",
+      "detected_intent": "tax",
+      "keyword_results": {
+        "80C": true,
+        "1.5": true,
+        "PPF": true,
+        "ELSS": true
+      },
+      "score": 1.0,
+      "status": "\u2705 PASS",
+      "response_length": 2236
+    },
+    {
+      "category": "Australia Education",
+      "question": "I live in Australia. Explain superannuation.",
+      "expected_country": "australia",
+      "detected_country": "australia",
+      "expected_intent": "education",
+      "detected_intent": "investment",
+      "keyword_results": {
+        "superannuation": true,
+        "11%": false,
+        "retirement": true
+      },
+      "score": 0.6666666666666666,
+      "status": "\u274c FAIL",
+      "response_length": 2290
+    },
+    {
+      "category": "Market Data",
+      "question": "What is the current Apple stock price?",
+      "expected_country": "unknown",
+      "detected_country": "unknown",
+      "expected_intent": "market",
+      "detected_intent": "market",
+      "keyword_results": {
+        "AAPL": true,
+        "$": true,
+        "price": true,
+        "volume": true
+      },
+      "score": 1.0,
+      "status": "\u2705 PASS",
+      "response_length": 537
+    },
+    {
+      "category": "Forex",
+      "question": "What is the EUR to USD exchange rate today?",
+      "expected_country": "usa",
+      "detected_country": "usa",
+      "expected_intent": "market",
+      "detected_intent": "market",
+      "keyword_results": {
+        "EUR": true,
+        "USD": true,
+        "rate": true,
+        "1.": true
+      },
+      "score": 1.0,
+      "status": "\u2705 PASS",
+      "response_length": 476
+    },
+    {
+      "category": "India Investment",
+      "question": "I live in India. Should I invest in ETFs or PPF?",
+      "expected_country": "india",
+      "detected_country": "india",
+      "expected_intent": "investment",
+      "detected_intent": "investment",
+      "keyword_results": {
+        "ETF": true,
+        "PPF": true,
+        "80C": true,
+        "risk": true
+      },
+      "score": 1.0,
+      "status": "\u2705 PASS",
+      "response_length": 2130
+    },
+    {
+      "category": "Germany Investment",
+      "question": "I live in Germany. What are the best ETF options?",
+      "expected_country": "germany",
+      "detected_country": "germany",
+      "expected_intent": "investment",
+      "detected_intent": "investment",
+      "keyword_results": {
+        "ETF": true,
+        "freistellungsauftrag": true,
+        "1,000": true
+      },
+      "score": 1.0,
+      "status": "\u2705 PASS",
+      "response_length": 1596
+    }
+  ]
+}

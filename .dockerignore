@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.env
+*.pptx
+*.pdf
+node_modules/
+.gradio/
+Presentation.pptx
